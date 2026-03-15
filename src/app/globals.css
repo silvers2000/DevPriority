@@ -14,8 +14,6 @@ body {
   background: #0D1117;
   color: #E6EDF3;
   font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-  height: 100%;
-  overflow: hidden;
 }
 
 /* Thin dark scrollbar */
