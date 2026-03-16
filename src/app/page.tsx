@@ -276,7 +276,7 @@ export default function HomePage() {
 
     const history = messages.concat({ id: 'temp', role: 'user', content: text, timestamp: new Date() });
     const assistantId = uuidv4();
-    setMessages((prev) => [...prev, { id: assistantId, role: 'assistant', content: '', timestamp: new Date() }]);
+    let assistantAdded = false;
 
     try {
       const response = await fetch('/api/chat', {
@@ -293,20 +293,28 @@ export default function HomePage() {
 
       const contentType = response.headers.get('Content-Type') ?? '';
 
+      // Helper: ensure assistant message row exists before writing content
+      const ensureAssistant = (initialContent = '') => {
+        if (!assistantAdded) {
+          assistantAdded = true;
+          setMessages((prev) => [...prev, { id: assistantId, role: 'assistant' as const, content: initialContent, timestamp: new Date() }]);
+        }
+      };
+
       if (contentType.includes('application/json')) {
         const data = await response.json() as { type?: string; ticketKey?: string; message?: string };
         if (data.type === 'take-control') {
-          updateMessage(assistantId, data.message ?? 'Starting browser agent…');
+          ensureAssistant(data.message ?? 'Starting browser agent…');
           setIsLoading(false);
           await startAgent(data.ticketKey ?? null, text);
           return;
         }
-        updateMessage(assistantId, data.message ?? JSON.stringify(data));
+        ensureAssistant(data.message ?? JSON.stringify(data));
         return;
       }
 
       if (!response.body) {
-        updateMessage(assistantId, '❌ No response body received.');
+        ensureAssistant('❌ No response body received.');
         return;
       }
 
@@ -317,11 +325,13 @@ export default function HomePage() {
         const { done, value } = await reader.read();
         if (done) break;
         fullText += decoder.decode(value, { stream: true });
+        ensureAssistant();
         updateMessage(assistantId, fullText);
       }
-      if (!fullText.trim()) updateMessage(assistantId, '❌ Received an empty response. Please try again.');
+      if (!fullText.trim()) { ensureAssistant(); updateMessage(assistantId, '❌ Received an empty response. Please try again.'); }
     } catch (err) {
-      updateMessage(assistantId, `❌ ${err instanceof Error ? err.message : 'Network error'}`);
+      if (!assistantAdded) { assistantAdded = true; setMessages((prev) => [...prev, { id: assistantId, role: 'assistant' as const, content: `❌ ${err instanceof Error ? err.message : 'Network error'}`, timestamp: new Date() }]); }
+      else updateMessage(assistantId, `❌ ${err instanceof Error ? err.message : 'Network error'}`);
     } finally {
       setIsLoading(false);
     }
