@@ -12,6 +12,7 @@ interface InputBarProps {
 
 export interface InputBarHandle {
   focus: () => void;
+  setValue: (text: string) => void;
 }
 
 const MAX_CHARS = 2000;
@@ -27,6 +28,13 @@ const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar({
 
   useImperativeHandle(ref, () => ({
     focus: () => textareaRef.current?.focus(),
+    setValue: (text: string) => {
+      setValue(text);
+      setTimeout(() => {
+        textareaRef.current?.focus();
+        resizeTextarea();
+      }, 0);
+    },
   }));
 
   const resizeTextarea = useCallback(() => {

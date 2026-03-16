@@ -43,6 +43,13 @@ export default function HomePage() {
   const [userId, setUserId] = useState<string | null>(null);
   // Toast for real-time notifications (Jira / Slack updates from agent on another device)
   const [realtimeToast, setRealtimeToast] = useState<string | null>(null);
+  // Dynamic suggestion chips built from real ticket data
+  const [suggestions, setSuggestions] = useState<string[]>([
+    'What should I work on today?',
+    'Show me my critical tickets',
+    'What should I work on today?',
+    'What should I work on today?',
+  ]);
   // Ref to focus the input via keyboard shortcut
   const inputBarRef = useRef<InputBarHandle>(null);
 
@@ -53,6 +60,24 @@ export default function HomePage() {
         if (!data) return;
         setUserEmail(data.email ?? '');
         setIntegrationConfigured(!!(data.jiraEmail && data.slackUserId));
+      })
+      .catch(() => {});
+
+    // Build dynamic suggestions from real Jira tickets
+    fetch('/api/jira/tickets')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { tickets?: { key: string; summary: string; priority?: { name: string } }[] } | null) => {
+        const tickets = data?.tickets ?? [];
+        if (tickets.length === 0) return;
+        // Pick most urgent (first) and second ticket for dynamic chips
+        const top = tickets[0];
+        const second = tickets[1];
+        setSuggestions([
+          'What should I work on today?',
+          'Show me my critical tickets',
+          second ? `Summarize Slack activity for ${second.key}` : 'Give me a daily digest',
+          top ? `Take control and close ${top.key}` : 'Take control of my top ticket',
+        ]);
       })
       .catch(() => {});
 
@@ -424,6 +449,10 @@ export default function HomePage() {
             onApprove={() => handleApproval(true)}
             onDeny={() => handleApproval(false)}
             onAlwaysAllow={() => handleApproval(true, 'always')}
+            suggestions={suggestions}
+            onSuggestionClick={(text) => {
+              inputBarRef.current?.setValue(text);
+            }}
           />
         </ErrorBoundary>
 

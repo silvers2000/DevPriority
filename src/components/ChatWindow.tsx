@@ -24,6 +24,8 @@ interface ChatWindowProps {
   onApprove?: () => void;
   onDeny?: () => void;
   onAlwaysAllow?: () => void;
+  onSuggestionClick?: (text: string) => void;
+  suggestions?: string[];
 }
 
 export default function ChatWindow({
@@ -33,6 +35,8 @@ export default function ChatWindow({
   onApprove,
   onDeny,
   onAlwaysAllow,
+  onSuggestionClick,
+  suggestions,
 }: ChatWindowProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -55,18 +59,19 @@ export default function ChatWindow({
           to let me handle a task for you.
         </p>
         <div className="mt-8 flex flex-wrap gap-2 justify-center">
-          {[
+          {(suggestions ?? [
             'What should I work on today?',
             'Show me my critical tickets',
             'Summarize Slack activity for DEV-123',
             'Take control and close PROJ-456',
-          ].map((hint) => (
-            <span
+          ]).map((hint) => (
+            <button
               key={hint}
-              className="text-xs text-[#8B949E] border border-[#30363D] rounded-full px-3 py-1.5 hover:border-[#F0A500]/30 hover:text-[#F0A500] cursor-default transition"
+              onClick={() => onSuggestionClick?.(hint)}
+              className="text-xs text-[#8B949E] border border-[#30363D] rounded-full px-3 py-1.5 hover:border-[#F0A500]/60 hover:text-[#F0A500] hover:bg-[#F0A500]/5 cursor-pointer transition"
             >
               {hint}
-            </span>
+            </button>
           ))}
         </div>
       </div>
