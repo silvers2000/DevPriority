@@ -47,8 +47,8 @@ export default function HomePage() {
   const [suggestions, setSuggestions] = useState<string[]>([
     'What should I work on today?',
     'Show me my critical tickets',
-    'What should I work on today?',
-    'What should I work on today?',
+    'Give me a daily digest',
+    'What are my blocked tickets?',
   ]);
   // Ref to focus the input via keyboard shortcut
   const inputBarRef = useRef<InputBarHandle>(null);
