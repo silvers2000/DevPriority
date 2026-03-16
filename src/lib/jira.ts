@@ -271,8 +271,36 @@ export async function createTicket(input: CreateTicketInput): Promise<CreatedTic
     if (input.priority) fields.priority = { name: input.priority };
     if (input.dueDate) fields.duedate = input.dueDate;
 
+    // Find active sprint ID before creating, so we can embed it in the creation payload
+    let activeSprintId: number | null = null;
+    try {
+      const { data: boardsData } = await client.get(`/rest/agile/1.0/board?projectKeyOrId=${projectKey}`);
+      const boardId = boardsData?.values?.[0]?.id;
+      if (boardId) {
+        const { data: sprintsData } = await client.get(`/rest/agile/1.0/board/${boardId}/sprint?state=active`);
+        activeSprintId = sprintsData?.values?.[0]?.id ?? null;
+        if (activeSprintId) console.log(`[Jira] Active sprint found: ${activeSprintId}`);
+      }
+    } catch (sprintErr) {
+      console.warn('[Jira] Could not find active sprint:', sprintErr instanceof Error ? sprintErr.message : sprintErr);
+    }
+
+    // Embed sprint in creation payload — most reliable way to land on the board
+    if (activeSprintId) fields.customfield_10020 = activeSprintId;
+
     const { data } = await client.post('/rest/api/3/issue', { fields });
-    console.log(`[Jira] createTicket → ${data.key}`);
+    console.log(`[Jira] createTicket → ${data.key}${activeSprintId ? ` (sprint ${activeSprintId})` : ''}`);
+
+    // Fallback: if sprint field didn't take (some configs ignore it), try the agile endpoint
+    if (activeSprintId) {
+      try {
+        await client.post(`/rest/agile/1.0/sprint/${activeSprintId}/issue`, { issues: [data.key] });
+        console.log(`[Jira] Sprint assignment confirmed for ${data.key}`);
+      } catch {
+        // Already in sprint via field — this is a no-op failure, ignore
+      }
+    }
+
     return { key: data.key, id: data.id, url: `${baseUrl}/browse/${data.key}` };
   } catch (err) {
     console.error('[Jira] createTicket error:', err instanceof Error ? err.message : err);
