@@ -102,7 +102,20 @@ export async function fetchAssignedTickets(jiraEmail: string): Promise<JiraTicke
   const t0 = Date.now();
   try {
     const client = createJiraClient();
-    const jql = `assignee = "${jiraEmail}" AND status != Done ORDER BY priority DESC, updated DESC`;
+
+    // Get account ID first to use in JQL (more reliable than email or currentUser())
+    let assigneeClause = `assignee = "${jiraEmail}"`;
+    try {
+      const { data: myself } = await client.get('/rest/api/3/myself');
+      if (myself?.accountId) {
+        assigneeClause = `assignee = "${myself.accountId}"`;
+        console.log(`[Jira] Using accountId=${myself.accountId}`);
+      }
+    } catch {
+      console.log('[Jira] Could not fetch accountId, falling back to email');
+    }
+
+    const jql = `${assigneeClause} AND status != Done ORDER BY priority DESC, updated DESC`;
     const fields = [
       'summary', 'description', 'priority', 'status', 'assignee',
       'duedate', 'customfield_10016', 'comment', 'issuelinks',
@@ -115,19 +128,26 @@ export async function fetchAssignedTickets(jiraEmail: string): Promise<JiraTicke
 
     while (tickets.length < total) {
       console.log(`[Jira] fetchAssignedTickets startAt=${startAt}`);
-      const { data } = await client.get('/rest/api/3/search', {
-        params: { jql, fields, maxResults, startAt },
+      // POST /rest/api/3/search/jql — new Atlassian endpoint (replaces deprecated GET /rest/api/3/search)
+      // Fields MUST be an array in the body; nextPageToken used for pagination but we use maxResults+startAt workaround
+      const { data } = await client.post('/rest/api/3/search/jql', {
+        jql,
+        fields: fields.split(','),
+        maxResults,
+        nextPageToken: startAt > 0 ? String(startAt) : undefined,
       });
 
-      total = data.total ?? 0;
+      // New API uses isLast instead of total; fall back to total for older responses
+      const isLast: boolean = data.isLast ?? (data.total !== undefined ? tickets.length + (data.issues?.length ?? 0) >= data.total : true);
+      total = data.total ?? (isLast ? 0 : Infinity);
       const issues: unknown[] = data.issues ?? [];
       if (issues.length === 0) break;
 
       tickets.push(...issues.map(parseIssue));
       startAt += issues.length;
 
-      // Only fetch first page (up to 50) by default
-      if (startAt >= maxResults) break;
+      // Stop if last page or we have enough
+      if (isLast || startAt >= maxResults) break;
     }
 
     console.log(`[${new Date().toISOString()}] [Jira] fetchAssignedTickets done ${Date.now() - t0}ms count=${tickets.length}`);
@@ -199,6 +219,44 @@ export async function addComment(
     return true;
   } catch (err) {
     console.error(`[Jira] addComment error for ${ticketKey}:`, err instanceof Error ? err.message : err);
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// updateTicketField — set priority, due date, or assignee directly via API
+// ---------------------------------------------------------------------------
+
+export async function updateTicketPriority(
+  ticketKey: string,
+  priority: string,
+): Promise<boolean> {
+  try {
+    const client = createJiraClient();
+    console.log(`[Jira] updateTicketPriority ${ticketKey} → ${priority}`);
+    await client.put(`/rest/api/3/issue/${ticketKey}`, {
+      fields: { priority: { name: priority } },
+    });
+    return true;
+  } catch (err) {
+    console.error(`[Jira] updateTicketPriority error:`, err instanceof Error ? err.message : err);
+    return false;
+  }
+}
+
+export async function updateTicketDueDate(
+  ticketKey: string,
+  dueDate: string, // YYYY-MM-DD
+): Promise<boolean> {
+  try {
+    const client = createJiraClient();
+    console.log(`[Jira] updateTicketDueDate ${ticketKey} → ${dueDate}`);
+    await client.put(`/rest/api/3/issue/${ticketKey}`, {
+      fields: { duedate: dueDate },
+    });
+    return true;
+  } catch (err) {
+    console.error(`[Jira] updateTicketDueDate error:`, err instanceof Error ? err.message : err);
     return false;
   }
 }

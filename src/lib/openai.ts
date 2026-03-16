@@ -64,35 +64,50 @@ export async function streamChatResponse(
 // classifyIntent
 // ---------------------------------------------------------------------------
 
-type Intent = 'chat' | 'take-control' | 'digest';
+export type Intent = 'chat' | 'take-control' | 'digest' | 'jira-action';
+
+export type JiraActionType = 'set-priority' | 'set-due-date' | 'set-status' | 'close';
+
+export interface JiraAction {
+  ticketKey: string;
+  action: JiraActionType;
+  value: string; // e.g. "High", "2026-03-20", "Done"
+}
 
 interface IntentResult {
   intent: Intent;
   ticketKey: string | null;
+  jiraAction?: JiraAction;
 }
 
 export async function classifyIntent(
   userMessage: string,
   ticketContext?: string,
-): Promise<Intent> {
+): Promise<{ intent: Intent; jiraAction?: JiraAction }> {
   try {
     const openai = getClient();
 
-    const systemPrompt = `You classify a developer's message into one of three intents.
+    const systemPrompt = `You classify a developer's message into one of four intents.
 
-Respond with ONLY valid JSON in this exact format: {"intent": "chat|take-control|digest", "ticketKey": "PROJ-123 or null"}
+Respond with ONLY valid JSON:
+{"intent": "chat|take-control|digest|jira-action", "ticketKey": "PROJ-123 or null", "jiraAction": null or {"ticketKey":"PDM-5","action":"set-priority|set-due-date|set-status|close","value":"High|2026-03-20|Done|null"}}
 
 Intent rules:
-- "take-control": message contains patterns like "take control", "handle this", "do this for me", "execute", "complete this", "fix it for me", "just do it", combined with a ticket reference (e.g. PROJ-123) OR a clear task description
-- "digest": message asks for a daily digest, morning briefing, priority overview, "what should I work on", "what's on my plate"
-- "chat": everything else — questions, analysis requests, conversations
+- "jira-action": user wants to directly update a Jira ticket field WITHOUT browser automation. Triggers on: "change priority", "set priority", "update due date", "set due date", "change status", "close ticket", "mark as done" — these are simple field updates.
+  - action="set-priority": value = priority name e.g. "High", "Medium", "Critical"
+  - action="set-due-date": value = date in YYYY-MM-DD format parsed from message
+  - action="set-status" or "close": value = status name e.g. "Done", "In Progress"
+- "take-control": user wants the browser agent to do complex multi-step work on ANY website
+- "digest": user asks for daily digest, "what should I work on", morning briefing
+- "chat": everything else
 
-${ticketContext ? `Ticket context for reference:\n${ticketContext}` : ''}`;
+Today's date: ${new Date().toISOString().slice(0, 10)}
+${ticketContext ? `Ticket context:\n${ticketContext}` : ''}`;
 
     const t0 = Date.now();
     const response = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
-      max_tokens: 64,
+      max_tokens: 128,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessage },
@@ -105,13 +120,15 @@ ${ticketContext ? `Ticket context for reference:\n${ticketContext}` : ''}`;
     const parsed = JSON.parse(raw) as IntentResult;
     const intent = parsed.intent;
 
-    if (intent === 'take-control' || intent === 'digest' || intent === 'chat') {
-      return intent;
+    if (intent === 'jira-action' && parsed.jiraAction?.ticketKey && parsed.jiraAction?.action) {
+      return { intent: 'jira-action', jiraAction: parsed.jiraAction };
     }
-    return 'chat';
+    if (intent === 'take-control' || intent === 'digest' || intent === 'jira-action') {
+      return { intent };
+    }
+    return { intent: 'chat' };
   } catch (err) {
-    // On any failure, fall back to 'chat' — don't block the user
     console.error('[OpenAI] classifyIntent error:', err instanceof Error ? err.message : err);
-    return 'chat';
+    return { intent: 'chat' };
   }
 }

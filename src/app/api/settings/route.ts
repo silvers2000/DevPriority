@@ -41,7 +41,9 @@ export async function PATCH(request: NextRequest) {
   const admin = createAdminClient();
   const { error } = await admin
     .from('users')
-    .update({
+    .upsert({
+      id: user.id,
+      email: user.email ?? '',
       display_name: body.displayName ?? null,
       jira_email: body.jiraEmail ?? null,
       slack_user_id: body.slackUserId ?? null,

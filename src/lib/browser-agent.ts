@@ -49,7 +49,7 @@ export class BrowserAgent {
   // ---------------------------------------------------------------------------
 
   async launch(): Promise<void> {
-    this.browser = await chromium.launch({ headless: true });
+    this.browser = await chromium.launch({ headless: false, slowMo: 300 });
     this.context = await this.browser.newContext({
       viewport: { width: 1280, height: 720 },
       userAgent:

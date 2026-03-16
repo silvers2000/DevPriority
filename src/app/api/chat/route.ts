@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase-server';
-import { fetchAssignedTickets } from '@/lib/jira';
+import { fetchAssignedTickets, updateTicketPriority, updateTicketDueDate, transitionTicket } from '@/lib/jira';
 import { fetchUserChannels, fetchRecentMessages } from '@/lib/slack';
 import { buildContext, serializeForLLM } from '@/lib/context-builder';
 import { getSystemPrompt, getChatMessages } from '@/lib/prompts';
@@ -74,10 +74,44 @@ export async function POST(request: NextRequest) {
 
   // Build enriched context
   const enrichedTickets = buildContext(tickets, slackMessages);
-  const context = serializeForLLM(enrichedTickets, sanitizedMessage);
+  const context = serializeForLLM(enrichedTickets, sanitizedMessage, slackMessages);
 
   // Classify intent
-  const intent = await classifyIntent(sanitizedMessage, context.slice(0, 500));
+  const { intent, jiraAction } = await classifyIntent(sanitizedMessage, context.slice(0, 500));
+
+  // Jira-action branch — direct API call, no browser needed
+  if (intent === 'jira-action' && jiraAction) {
+    const { ticketKey, action, value } = jiraAction;
+    let success = false;
+    let confirmMsg = '';
+
+    if (action === 'set-priority') {
+      success = await updateTicketPriority(ticketKey, value);
+      confirmMsg = success
+        ? `✅ **${ticketKey}** priority updated to **${value}**`
+        : `❌ Failed to update priority for **${ticketKey}**. Check that the priority name is valid (Critical, High, Medium, Low).`;
+    } else if (action === 'set-due-date') {
+      success = await updateTicketDueDate(ticketKey, value);
+      confirmMsg = success
+        ? `✅ **${ticketKey}** due date set to **${value}**`
+        : `❌ Failed to update due date for **${ticketKey}**.`;
+    } else if (action === 'set-status' || action === 'close') {
+      const statusName = action === 'close' ? 'Done' : value;
+      success = await transitionTicket(ticketKey, statusName);
+      confirmMsg = success
+        ? `✅ **${ticketKey}** status changed to **${statusName}**`
+        : `❌ Failed to transition **${ticketKey}** to "${statusName}". Available transitions may differ — try "Done", "In Progress", or "To Do".`;
+    }
+
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(confirmMsg));
+        controller.close();
+      },
+    });
+    return new Response(stream, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+  }
 
   // Take-control branch — return JSON, agent handled separately
   if (intent === 'take-control') {

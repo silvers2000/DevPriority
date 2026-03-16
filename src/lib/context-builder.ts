@@ -179,8 +179,24 @@ const CHAR_LIMIT = 16_000; // ~4000 tokens @ ~4 chars/token
 export function serializeForLLM(
   enrichedTickets: EnrichedTicket[],
   userQuestion: string,
+  rawSlackMessages: SlackMessage[] = [],
 ): string {
   const lines: string[] = ['=== JIRA + SLACK CONTEXT ===', ''];
+
+  if (enrichedTickets.length === 0) {
+    lines.push('NO JIRA TICKETS FOUND assigned to this user. DO NOT invent or fabricate any tickets.');
+    if (rawSlackMessages.length > 0) {
+      lines.push('');
+      lines.push('=== RECENT SLACK MESSAGES ===');
+      for (const m of rawSlackMessages.slice(0, 20)) {
+        lines.push(`[${m.channel}] ${m.username}: ${m.text}`);
+      }
+    }
+    lines.push('');
+    lines.push('=== USER QUESTION ===', userQuestion);
+    return lines.join('\n');
+  }
+
   let totalChars = 0;
 
   for (const t of enrichedTickets) {
