@@ -224,6 +224,63 @@ export async function addComment(
 }
 
 // ---------------------------------------------------------------------------
+// createTicket
+// ---------------------------------------------------------------------------
+
+export interface CreateTicketInput {
+  summary: string;
+  description?: string;
+  priority?: string;   // e.g. "High", "Medium"
+  dueDate?: string;    // YYYY-MM-DD
+}
+
+export interface CreatedTicket {
+  key: string;
+  id: string;
+  url: string;
+}
+
+export async function createTicket(input: CreateTicketInput): Promise<CreatedTicket | null> {
+  try {
+    const client = createJiraClient();
+    const baseUrl = process.env.JIRA_BASE_URL ?? '';
+
+    // Get the first available project key
+    const { data: projectsData } = await client.get('/rest/api/3/project/search?maxResults=1');
+    const projectKey = projectsData?.values?.[0]?.key;
+    if (!projectKey) throw new Error('No Jira project found');
+
+    // Get issue type ID for Task
+    const { data: metaData } = await client.get(`/rest/api/3/issue/createmeta?projectKeys=${projectKey}&expand=projects.issuetypes`);
+    const issueTypes: { id: string; name: string }[] = metaData?.projects?.[0]?.issuetypes ?? [];
+    const taskType = issueTypes.find((t) => t.name === 'Task') ?? issueTypes[0];
+    if (!taskType) throw new Error('No issue type found');
+
+    const fields: Record<string, unknown> = {
+      project: { key: projectKey },
+      summary: input.summary,
+      issuetype: { id: taskType.id },
+    };
+
+    if (input.description) {
+      fields.description = {
+        type: 'doc', version: 1,
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: input.description }] }],
+      };
+    }
+    if (input.priority) fields.priority = { name: input.priority };
+    if (input.dueDate) fields.duedate = input.dueDate;
+
+    const { data } = await client.post('/rest/api/3/issue', { fields });
+    console.log(`[Jira] createTicket → ${data.key}`);
+    return { key: data.key, id: data.id, url: `${baseUrl}/browse/${data.key}` };
+  } catch (err) {
+    console.error('[Jira] createTicket error:', err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // updateTicketField — set priority, due date, or assignee directly via API
 // ---------------------------------------------------------------------------
 

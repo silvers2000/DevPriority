@@ -64,41 +64,55 @@ export async function streamChatResponse(
 // classifyIntent
 // ---------------------------------------------------------------------------
 
-export type Intent = 'chat' | 'take-control' | 'digest' | 'jira-action';
+export type Intent = 'chat' | 'take-control' | 'digest' | 'jira-action' | 'create-ticket';
 
 export type JiraActionType = 'set-priority' | 'set-due-date' | 'set-status' | 'close';
 
 export interface JiraAction {
   ticketKey: string;
   action: JiraActionType;
-  value: string; // e.g. "High", "2026-03-20", "Done"
+  value: string;
+}
+
+export interface CreateTicketIntent {
+  summary: string;
+  description?: string;
+  priority?: string;
+  dueDate?: string; // YYYY-MM-DD
 }
 
 interface IntentResult {
   intent: Intent;
   ticketKey: string | null;
   jiraAction?: JiraAction;
+  createTicket?: CreateTicketIntent;
 }
 
 export async function classifyIntent(
   userMessage: string,
   ticketContext?: string,
-): Promise<{ intent: Intent; jiraAction?: JiraAction }> {
+): Promise<{ intent: Intent; jiraAction?: JiraAction; createTicket?: CreateTicketIntent }> {
   try {
     const openai = getClient();
 
-    const systemPrompt = `You classify a developer's message into one of four intents.
+    const systemPrompt = `You classify a developer's message into one of five intents.
 
 Respond with ONLY valid JSON:
-{"intent": "chat|take-control|digest|jira-action", "ticketKey": "PROJ-123 or null", "jiraAction": null or {"ticketKey":"PDM-5","action":"set-priority|set-due-date|set-status|close","value":"High|2026-03-20|Done|null"}}
+{
+  "intent": "chat|take-control|digest|jira-action|create-ticket",
+  "ticketKey": "PROJ-123 or null",
+  "jiraAction": null or {"ticketKey":"PDM-5","action":"set-priority|set-due-date|set-status|close","value":"High|2026-03-20|Done"},
+  "createTicket": null or {"summary":"...","description":"...","priority":"High|Medium|Low|Critical","dueDate":"YYYY-MM-DD or null"}
+}
 
 Intent rules:
-- "jira-action": user wants to directly update a Jira ticket field WITHOUT browser automation. Triggers on: "change priority", "set priority", "update due date", "set due date", "change status", "close ticket", "mark as done" — these are simple field updates.
-  - action="set-priority": value = priority name e.g. "High", "Medium", "Critical"
-  - action="set-due-date": value = date in YYYY-MM-DD format parsed from message
-  - action="set-status" or "close": value = status name e.g. "Done", "In Progress"
-- "take-control": user wants the browser agent to do complex multi-step work on ANY website
-- "digest": user asks for daily digest, "what should I work on", morning briefing
+- "create-ticket": user wants to CREATE a new Jira ticket. Triggers on: "create a ticket", "add a task", "make a new ticket", "log a bug", "create an issue". Extract summary, optional description, optional priority, optional due date.
+- "jira-action": user wants to UPDATE an existing ticket field. Triggers on: "change priority", "set priority", "update due date", "set due date", "close ticket", "mark as done".
+  - action="set-priority": value = "High"|"Medium"|"Low"|"Critical"
+  - action="set-due-date": value = YYYY-MM-DD
+  - action="set-status"/"close": value = "Done"|"In Progress"|"To Do"
+- "take-control": user wants the browser agent for complex multi-step tasks on any website
+- "digest": "what should I work on", daily digest, morning briefing
 - "chat": everything else
 
 Today's date: ${new Date().toISOString().slice(0, 10)}
@@ -107,7 +121,7 @@ ${ticketContext ? `Ticket context:\n${ticketContext}` : ''}`;
     const t0 = Date.now();
     const response = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
-      max_tokens: 128,
+      max_tokens: 200,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessage },
@@ -120,10 +134,13 @@ ${ticketContext ? `Ticket context:\n${ticketContext}` : ''}`;
     const parsed = JSON.parse(raw) as IntentResult;
     const intent = parsed.intent;
 
+    if (intent === 'create-ticket' && parsed.createTicket?.summary) {
+      return { intent: 'create-ticket', createTicket: parsed.createTicket };
+    }
     if (intent === 'jira-action' && parsed.jiraAction?.ticketKey && parsed.jiraAction?.action) {
       return { intent: 'jira-action', jiraAction: parsed.jiraAction };
     }
-    if (intent === 'take-control' || intent === 'digest' || intent === 'jira-action') {
+    if (intent === 'take-control' || intent === 'digest') {
       return { intent };
     }
     return { intent: 'chat' };

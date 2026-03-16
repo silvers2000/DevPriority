@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase-server';
-import { fetchAssignedTickets, updateTicketPriority, updateTicketDueDate, transitionTicket } from '@/lib/jira';
+import { fetchAssignedTickets, updateTicketPriority, updateTicketDueDate, transitionTicket, createTicket } from '@/lib/jira';
 import { fetchUserChannels, fetchRecentMessages } from '@/lib/slack';
 import { buildContext, serializeForLLM } from '@/lib/context-builder';
 import { getSystemPrompt, getChatMessages } from '@/lib/prompts';
@@ -77,7 +77,20 @@ export async function POST(request: NextRequest) {
   const context = serializeForLLM(enrichedTickets, sanitizedMessage, slackMessages);
 
   // Classify intent
-  const { intent, jiraAction } = await classifyIntent(sanitizedMessage, context.slice(0, 500));
+  const { intent, jiraAction, createTicket: createTicketIntent } = await classifyIntent(sanitizedMessage, context.slice(0, 500));
+
+  // Create-ticket branch — create a new Jira ticket via API
+  if (intent === 'create-ticket' && createTicketIntent) {
+    const created = await createTicket(createTicketIntent);
+    const encoder = new TextEncoder();
+    const msg = created
+      ? `✅ Created **[${created.key}](${created.url})** — "${createTicketIntent.summary}"${createTicketIntent.priority ? ` · Priority: **${createTicketIntent.priority}**` : ''}${createTicketIntent.dueDate ? ` · Due: **${createTicketIntent.dueDate}**` : ''}`
+      : `❌ Failed to create ticket. Check that your Jira project key and API token are correct.`;
+    const stream = new ReadableStream({
+      start(controller) { controller.enqueue(encoder.encode(msg)); controller.close(); },
+    });
+    return new Response(stream, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+  }
 
   // Jira-action branch — direct API call, no browser needed
   if (intent === 'jira-action' && jiraAction) {
